@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, 'Courier New', monospace;
+  }
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  body {
+    @apply bg-bg-0 text-fg-0 antialiased;
+  }
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-r from-accent-green to-accent-cyan px-3 py-1.5 text-sm font-medium text-bg-0 transition-shadow hover:shadow-glow-accent disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border-0.5 border-border-0 bg-transparent px-3 py-1.5 text-sm font-medium text-fg-1 transition-colors hover:bg-bg-2 hover:text-fg-0 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-status-bad px-3 py-1.5 text-sm font-medium text-bg-0 transition-shadow hover:shadow-glow-bad;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm text-fg-1 transition-colors hover:bg-bg-2 hover:text-fg-0;
+  }
+  .input {
+    @apply block w-full rounded-md border-0.5 border-border-0 bg-bg-1 px-3 py-1.5 text-sm text-fg-0 placeholder:text-fg-2 focus:border-accent-green focus:outline-none focus:ring-2 focus:ring-accent-green/30;
+  }
+  .card {
+    @apply rounded-lg border-0.5 border-border-0 bg-bg-1;
+  }
+  .stat-card {
+    @apply relative overflow-hidden rounded-lg border-0.5 border-border-0 bg-bg-1 px-3.5 py-3 transition-[transform,border-color] duration-200 hover:-translate-y-px hover:border-border-1;
+  }
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--accent, #4ade80),
+      transparent
+    );
+  }
+}
+
+@layer utilities {
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .pulse-dot {
+    animation: pulse-dot 1.4s ease-in-out infinite;
+  }
+  @keyframes tab-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .tab-fade-in {
+    animation: tab-fade-in 0.2s ease-out;
+  }
+}

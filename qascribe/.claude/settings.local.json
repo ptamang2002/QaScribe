@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -v)",
+      "Bash(.venv/Scripts/python -c \"from app.api import artifacts; from app.main import app; print\\('imports ok'\\); print\\('routes:', [r.path for r in app.routes if '/api/artifacts' in r.path]\\)\")",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
