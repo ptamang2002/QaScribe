@@ -405,7 +405,7 @@ function ExpandedSessions({
 }) {
   const { data: sessions } = useQuery({
     queryKey: ['sessions'],
-    queryFn: listSessions,
+    queryFn: () => listSessions(),
     staleTime: 60_000,
   });
   const titleById = new Map<string, { title: string; created_at: string }>();

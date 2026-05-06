@@ -173,6 +173,9 @@ export interface ArtifactStats {
   bugs_by_priority: Record<Priority, number>;
   bugs_by_review_status: Record<ReviewStatus, number>;
   open_high_severity_count: number;
+  high_severity_confirmed_count: number;
+  test_cases_user_edited_this_month: number;
+  artifacts_created_last_7_days: Record<ArtifactType, number>;
 }
 
 export interface ListArtifactsParams {

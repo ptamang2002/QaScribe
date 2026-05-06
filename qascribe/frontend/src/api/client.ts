@@ -33,8 +33,10 @@ export async function createSession(
   return data;
 }
 
-export async function listSessions(): Promise<SessionListItem[]> {
-  const { data } = await api.get('/api/sessions');
+export async function listSessions(limit?: number): Promise<SessionListItem[]> {
+  const { data } = await api.get('/api/sessions', {
+    params: limit !== undefined ? { limit } : undefined,
+  });
   return data;
 }
 

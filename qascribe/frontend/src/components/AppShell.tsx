@@ -24,7 +24,8 @@ export function AppShell() {
           <span className="text-base font-medium text-fg-0">QAScribe</span>
         </Link>
         <nav className="flex flex-col gap-0.5 text-sm">
-          <SideNavLink to="/" label="Sessions" />
+          <SideNavLink to="/" label="Dashboard" />
+          <SideNavLink to="/sessions" label="Sessions" />
           <SideNavLink
             to="/test-plans"
             label="Test plans"

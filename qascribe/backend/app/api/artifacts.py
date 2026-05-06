@@ -4,7 +4,7 @@ Pure DB aggregation — no AI calls, no schema changes. All endpoints scope
 to the current user via JOIN on sessions.user_id.
 """
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -280,6 +280,48 @@ async def artifact_stats(
 
     open_high = bugs_by_severity["critical"] + bugs_by_severity["high"]
 
+    # ---- Phase 5 dashboard fields ----
+    high_sev_confirmed_stmt = (
+        select(func.count(Artifact.id))
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user.id,
+            Artifact.artifact_type == "bug_report",
+            Artifact.review_status == "confirmed",
+            sev_expr.in_(("critical", "high")),
+        )
+    )
+    high_sev_confirmed = (await db.execute(high_sev_confirmed_stmt)).scalar() or 0
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # No updated_at column on Artifact — proxy "edited this month" with
+    # test cases CREATED this month that are user_edited=True.
+    edited_tc_stmt = (
+        select(func.count(Artifact.id))
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user.id,
+            Artifact.artifact_type == "test_case",
+            Artifact.user_edited.is_(True),
+            Artifact.created_at >= month_start,
+        )
+    )
+    edited_tc_this_month = (await db.execute(edited_tc_stmt)).scalar() or 0
+
+    week_start = now - timedelta(days=7)
+    last7_stmt = (
+        select(Artifact.artifact_type, func.count(Artifact.id))
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user.id,
+            Artifact.created_at >= week_start,
+        )
+        .group_by(Artifact.artifact_type)
+    )
+    last7_raw = {t: int(c) for t, c in (await db.execute(last7_stmt)).all()}
+    last7 = {k: last7_raw.get(k, 0) for k in ("bug_report", "test_case", "coverage_gap")}
+
     return ArtifactStatsResponse(
         total_test_cases=type_counts.get("test_case", 0),
         total_bug_reports=type_counts.get("bug_report", 0),
@@ -288,6 +330,9 @@ async def artifact_stats(
         bugs_by_priority=bugs_by_priority,
         bugs_by_review_status=bugs_by_review_status,
         open_high_severity_count=open_high,
+        high_severity_confirmed_count=int(high_sev_confirmed),
+        test_cases_user_edited_this_month=int(edited_tc_this_month),
+        artifacts_created_last_7_days=last7,
     )
 
 

@@ -7,7 +7,9 @@ import {
   getWorkflow, retrySession, updateArtifact,
 } from '../api/client';
 import type { Artifact, ArtifactType, WorkflowStep } from '../types';
+import { BugCard } from '../components/BugCard';
 import { useToast } from '../components/Toast';
+import { useBugReviewMutation } from '../hooks/useBugReviewMutation';
 
 type SubTab = 'workflow' | 'test_cases' | 'bugs' | 'coverage' | 'transcript';
 
@@ -70,13 +72,28 @@ export function SessionDetailPage() {
     },
   });
 
+  // Hoisted artifacts query — TanStack dedupes the identical key with child
+  // queries below, so this is a shared cache read, not a duplicate fetch.
+  // We need it here to compute the unreviewed-bug badge count and to mute
+  // dismissed-bug links in the workflow timeline.
+  const isCompleted = session?.status === 'completed';
+  const { data: artifacts } = useQuery({
+    queryKey: ['artifacts', sessionId],
+    queryFn: () => getArtifacts(sessionId),
+    enabled: !!sessionId && isCompleted,
+  });
+
   if (!session) {
     return <SessionSkeleton />;
   }
 
   const isProcessing = session.status === 'queued' || session.status === 'processing';
-  const isCompleted = session.status === 'completed';
   const cost = session.actual_cost_usd ?? session.estimated_cost_usd;
+  const unreviewedBugCount = artifacts
+    ? artifacts.filter(
+        (a) => a.artifact_type === 'bug_report' && a.review_status === 'unreviewed',
+      ).length
+    : undefined;
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-6">
@@ -154,7 +171,13 @@ export function SessionDetailPage() {
               active={tab === 'bugs'}
               onClick={() => setTab('bugs')}
               label="Bugs"
-              count={session.artifact_counts.bug_report}
+              // Show unreviewed-only count (matches dashboard "needs attention"
+              // logic). Hide the badge when zero or while artifacts load.
+              count={
+                unreviewedBugCount && unreviewedBugCount > 0
+                  ? unreviewedBugCount
+                  : undefined
+              }
               countRedTint
             />
             <Tab
@@ -171,11 +194,13 @@ export function SessionDetailPage() {
           </div>
 
           <div key={tab} className="tab-fade-in mt-5">
-            {tab === 'workflow' && <WorkflowTab sessionId={sessionId} />}
+            {tab === 'workflow' && (
+              <WorkflowTab sessionId={sessionId} artifacts={artifacts} />
+            )}
             {tab === 'test_cases' && (
               <ArtifactsList sessionId={sessionId} type="test_case" />
             )}
-            {tab === 'bugs' && <ArtifactsList sessionId={sessionId} type="bug_report" />}
+            {tab === 'bugs' && <BugsList sessionId={sessionId} />}
             {tab === 'coverage' && (
               <ArtifactsList sessionId={sessionId} type="coverage_gap" />
             )}
@@ -275,7 +300,12 @@ function SessionSkeleton() {
   );
 }
 
-function WorkflowTab({ sessionId }: { sessionId: string }) {
+function WorkflowTab({
+  sessionId, artifacts,
+}: {
+  sessionId: string;
+  artifacts: Artifact[] | undefined;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -288,6 +318,17 @@ function WorkflowTab({ sessionId }: { sessionId: string }) {
     queryKey: ['workflow', sessionId],
     queryFn: () => getWorkflow(sessionId),
   });
+
+  const dismissedBugIds = useMemo(() => {
+    if (!artifacts) return new Set<string>();
+    return new Set(
+      artifacts
+        .filter(
+          (a) => a.artifact_type === 'bug_report' && a.review_status === 'dismissed',
+        )
+        .map((a) => a.id),
+    );
+  }, [artifacts]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -425,7 +466,12 @@ function WorkflowTab({ sessionId }: { sessionId: string }) {
             </div>
           ) : (
             markers.map((step) => (
-              <StepRow key={step.step_number} step={step} onSeek={seekTo} />
+              <StepRow
+                key={step.step_number}
+                step={step}
+                onSeek={seekTo}
+                dismissedBugIds={dismissedBugIds}
+              />
             ))
           )}
         </div>
@@ -434,9 +480,21 @@ function WorkflowTab({ sessionId }: { sessionId: string }) {
   );
 }
 
-function StepRow({ step, onSeek }: { step: WorkflowStep; onSeek: (ts: number) => void }) {
+function StepRow({
+  step, onSeek, dismissedBugIds,
+}: {
+  step: WorkflowStep;
+  onSeek: (ts: number) => void;
+  dismissedBugIds: Set<string>;
+}) {
   const color = STEP_COLOR[step.kind];
   const isAnomaly = step.kind === 'anomaly';
+  const linkedCount = step.linked_artifact_ids.length;
+  // The anomaly happened regardless of triage outcome — keep the marker
+  // visible but mute the link text when every linked bug was dismissed.
+  const allLinkedDismissed =
+    linkedCount > 0 &&
+    step.linked_artifact_ids.every((id) => dismissedBugIds.has(id));
   return (
     <button
       onClick={() => onSeek(step.timestamp_seconds)}
@@ -455,17 +513,74 @@ function StepRow({ step, onSeek }: { step: WorkflowStep; onSeek: (ts: number) =>
           <span className="tabular-nums">{formatTimestamp(step.timestamp_seconds)}</span>
           <span>·</span>
           <span className="capitalize">{step.kind.replace('_', ' ')}</span>
-          {step.linked_artifact_ids.length > 0 && (
+          {linkedCount > 0 && (
             <>
               <span>·</span>
-              <span style={{ color: '#f87171' }}>
-                linked to {step.linked_artifact_ids.length} bug
+              <span
+                style={{
+                  color: allLinkedDismissed ? '#6b6b75' : '#f87171',
+                  textDecoration: allLinkedDismissed ? 'line-through' : undefined,
+                }}
+              >
+                linked to {linkedCount} bug
               </span>
             </>
           )}
         </div>
       </div>
     </button>
+  );
+}
+
+function BugsList({ sessionId }: { sessionId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { changeReview } = useBugReviewMutation();
+
+  const { data: artifacts, isLoading } = useQuery({
+    queryKey: ['artifacts', sessionId],
+    queryFn: () => getArtifacts(sessionId),
+  });
+  const bugs = artifacts?.filter((a) => a.artifact_type === 'bug_report') ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="card h-20 animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+  if (bugs.length === 0) {
+    return (
+      <div className="card px-3.5 py-7 text-center text-[12px] text-fg-2">
+        No bug reports generated for this session.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card divide-y-0.5 divide-border-0">
+      {bugs.map((bug) => (
+        <BugCard
+          key={bug.id}
+          bug={bug}
+          sessionId={sessionId}
+          context="session-detail"
+          onReview={(status) => changeReview(bug.id, status, bug.review_status)}
+          onSavedRecategorize={() => {
+            queryClient.invalidateQueries({ queryKey: ['artifacts', sessionId] });
+            queryClient.invalidateQueries({ queryKey: ['artifacts', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['artifacts', 'stats'] });
+            toast.push('Bug updated', 'success');
+          }}
+          onRecategorizeError={() =>
+            toast.push("Couldn't save changes", 'error')
+          }
+        />
+      ))}
+    </div>
   );
 }
 

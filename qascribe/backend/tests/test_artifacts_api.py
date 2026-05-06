@@ -226,6 +226,107 @@ async def test_artifact_stats(client, seeded_data):
     }
     assert data["bugs_by_priority"] == {"P1": 2, "P2": 0, "P3": 1, "P4": 1}
     assert data["open_high_severity_count"] == 2  # critical + high
+    # Phase 5 fields with default-state seed: nothing confirmed, nothing
+    # user-edited, but every artifact created "now" so last-7d == totals.
+    assert data["high_severity_confirmed_count"] == 0
+    assert data["test_cases_user_edited_this_month"] == 0
+    assert data["artifacts_created_last_7_days"] == {
+        "bug_report": 4, "test_case": 2, "coverage_gap": 3,
+    }
+
+
+async def test_artifact_stats_high_severity_confirmed(db_session, client, seeded_data):
+    """Only critical+high bugs that are review_status='confirmed' count."""
+    from app.models.spend import Artifact, Session as SessionModel
+
+    user_id = seeded_data["user"].id
+    rows = (await db_session.execute(
+        select(Artifact)
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(SessionModel.user_id == user_id)
+    )).scalars().all()
+    # Confirm the critical bug and the high bug.
+    for a in rows:
+        if a.artifact_type == "bug_report" and a.content.get("severity") in ("critical", "high"):
+            a.review_status = "confirmed"
+    # Also confirm a low-severity bug to prove it does NOT get counted.
+    for a in rows:
+        if a.artifact_type == "bug_report" and a.content.get("severity") == "low":
+            a.review_status = "confirmed"
+    await db_session.commit()
+
+    r = await client.get("/api/artifacts/stats")
+    assert r.status_code == 200
+    assert r.json()["high_severity_confirmed_count"] == 2
+
+
+async def test_artifact_stats_user_edited_test_cases(db_session, client, seeded_data):
+    """Only test_case rows with user_edited=True (created this month) are counted."""
+    from app.models.spend import Artifact, Session as SessionModel
+
+    user_id = seeded_data["user"].id
+    tcs = (await db_session.execute(
+        select(Artifact)
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user_id,
+            Artifact.artifact_type == "test_case",
+        )
+    )).scalars().all()
+    assert len(tcs) == 2
+    tcs[0].user_edited = True
+    # Editing a non-test-case artifact must not count.
+    bugs = (await db_session.execute(
+        select(Artifact)
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user_id,
+            Artifact.artifact_type == "bug_report",
+        )
+    )).scalars().all()
+    bugs[0].user_edited = True
+    await db_session.commit()
+
+    r = await client.get("/api/artifacts/stats")
+    assert r.status_code == 200
+    assert r.json()["test_cases_user_edited_this_month"] == 1
+
+
+async def test_artifact_stats_last_7_days_excludes_old(
+    db_session, seeded_user, client,
+):
+    """Artifacts older than 7 days must not appear in artifacts_created_last_7_days."""
+    from datetime import datetime, timedelta, timezone
+    from app.models.spend import Artifact, Session as SessionModel
+
+    s = SessionModel(
+        user_id=seeded_user.id, title="Old session",
+        video_s3_key="old", video_duration_seconds=10, video_size_bytes=10,
+        status="completed",
+    )
+    db_session.add(s)
+    await db_session.commit()
+    await db_session.refresh(s)
+
+    long_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.add(Artifact(
+        session_id=s.id, artifact_type="bug_report",
+        content={"title": "Stale bug"}, created_at=long_ago,
+    ))
+    db_session.add(Artifact(
+        session_id=s.id, artifact_type="bug_report",
+        content={"title": "Recent bug"}, created_at=recent,
+    ))
+    await db_session.commit()
+
+    r = await client.get("/api/artifacts/stats")
+    assert r.status_code == 200
+    last7 = r.json()["artifacts_created_last_7_days"]
+    # 1 stale bug excluded, 1 recent bug included → recent count is exactly 1.
+    assert last7["bug_report"] == 1
+    assert last7["test_case"] == 0
+    assert last7["coverage_gap"] == 0
 
 
 async def test_coverage_rollup_dedups_by_normalized_title(client, seeded_data):

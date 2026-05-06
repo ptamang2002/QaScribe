@@ -7,6 +7,7 @@ import { CoveragePage } from './pages/CoveragePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { NewSessionPage } from './pages/NewSessionPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
+import { SessionsPage } from './pages/SessionsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TestPlansPage } from './pages/TestPlansPage';
 
@@ -28,6 +29,7 @@ export default function App() {
           <Routes>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
+              <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/sessions/new" element={<NewSessionPage />} />
               <Route path="/sessions/:id" element={<SessionDetailPage />} />
               <Route path="/test-plans" element={<TestPlansPage />} />

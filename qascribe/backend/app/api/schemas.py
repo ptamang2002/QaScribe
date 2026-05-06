@@ -160,6 +160,12 @@ class ArtifactStatsResponse(BaseModel):
     bugs_by_priority: dict[str, int]
     bugs_by_review_status: dict[str, int]
     open_high_severity_count: int
+    # Phase 5 dashboard fields. Existing fields above stay unchanged.
+    high_severity_confirmed_count: int = 0
+    test_cases_user_edited_this_month: int = 0
+    artifacts_created_last_7_days: dict[str, int] = Field(
+        default_factory=lambda: {"bug_report": 0, "test_case": 0, "coverage_gap": 0}
+    )
 
 
 class CoverageRollupItem(BaseModel):
