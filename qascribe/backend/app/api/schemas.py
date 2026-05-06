@@ -1,6 +1,10 @@
 """Pydantic schemas for the API layer."""
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+ReviewStatus = Literal["unreviewed", "confirmed", "dismissed", "needs_more_info"]
 
 
 # ---- Cost / Budget ----
@@ -77,10 +81,23 @@ class ArtifactResponse(BaseModel):
     content: dict
     user_edited: bool
     created_at: datetime
+    review_status: ReviewStatus
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: str | None = None
+    review_notes: str | None = None
 
 
 class ArtifactUpdateRequest(BaseModel):
     content: dict
+
+
+class ArtifactReviewUpdate(BaseModel):
+    review_status: ReviewStatus
+    review_notes: str | None = None
+
+
+class ArtifactReviewResponse(ArtifactResponse):
+    pass
 
 
 # ---- Workflow ----
@@ -122,6 +139,10 @@ class AggregatedArtifactItem(BaseModel):
     evidence_timestamps: list[str] = []
     user_edited: bool
     created_at: datetime
+    review_status: ReviewStatus
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: str | None = None
+    review_notes: str | None = None
 
 
 class ArtifactListResponse(BaseModel):
@@ -137,6 +158,7 @@ class ArtifactStatsResponse(BaseModel):
     total_coverage_gaps: int
     bugs_by_severity: dict[str, int]
     bugs_by_priority: dict[str, int]
+    bugs_by_review_status: dict[str, int]
     open_high_severity_count: int
 
 

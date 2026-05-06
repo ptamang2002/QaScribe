@@ -390,6 +390,8 @@ async def get_session_artifacts(
         ArtifactResponse(
             id=a.id, artifact_type=a.artifact_type, content=a.content,
             user_edited=a.user_edited, created_at=a.created_at,
+            review_status=a.review_status, reviewed_at=a.reviewed_at,
+            reviewed_by_user_id=a.reviewed_by_user_id, review_notes=a.review_notes,
         )
         for a in result.scalars()
     ]
@@ -418,6 +420,9 @@ async def update_artifact(
         id=artifact.id, artifact_type=artifact.artifact_type,
         content=artifact.content, user_edited=artifact.user_edited,
         created_at=artifact.created_at,
+        review_status=artifact.review_status, reviewed_at=artifact.reviewed_at,
+        reviewed_by_user_id=artifact.reviewed_by_user_id,
+        review_notes=artifact.review_notes,
     )
 
 

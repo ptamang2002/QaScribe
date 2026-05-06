@@ -1,8 +1,9 @@
 import axios from 'axios';
 import type {
-  Artifact, ArtifactListResponse, ArtifactStats, BudgetStatus, CostEstimate,
-  CoverageRollupResponse, DashboardStats, ListArtifactsParams, ModelConfig,
-  SessionListItem, SessionStatusResponse, UserMe, WorkflowResponse,
+  AggregatedArtifactItem, Artifact, ArtifactListResponse, ArtifactStats,
+  BudgetStatus, CostEstimate, CoverageRollupResponse, DashboardStats,
+  ListArtifactsParams, ModelConfig, ReviewStatus, SessionListItem,
+  SessionStatusResponse, UserMe, WorkflowResponse,
 } from '../types';
 
 const api = axios.create({
@@ -124,6 +125,7 @@ export async function listArtifacts(
     search.severity = params.severity.join(',');
   if (params.priority && params.priority.length > 0)
     search.priority = params.priority.join(',');
+  if (params.review_status) search.review_status = params.review_status;
   if (params.search) search.search = params.search;
   if (params.sort) search.sort = params.sort;
   if (params.page) search.page = String(params.page);
@@ -139,5 +141,13 @@ export async function getArtifactStats(): Promise<ArtifactStats> {
 
 export async function getCoverageRollup(): Promise<CoverageRollupResponse> {
   const { data } = await api.get('/api/artifacts/coverage-rollup');
+  return data;
+}
+
+export async function reviewArtifact(
+  artifactId: string,
+  body: { review_status: ReviewStatus; review_notes?: string },
+): Promise<AggregatedArtifactItem> {
+  const { data } = await api.patch(`/api/artifacts/${artifactId}/review`, body);
   return data;
 }

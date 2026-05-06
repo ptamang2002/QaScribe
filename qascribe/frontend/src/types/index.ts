@@ -53,12 +53,22 @@ export interface SessionListItem {
 
 export type ArtifactType = 'test_case' | 'bug_report' | 'coverage_gap';
 
+export type ReviewStatus =
+  | 'unreviewed'
+  | 'confirmed'
+  | 'dismissed'
+  | 'needs_more_info';
+
 export interface Artifact {
   id: string;
   artifact_type: ArtifactType;
   content: Record<string, unknown>;
   user_edited: boolean;
   created_at: string;
+  review_status: ReviewStatus;
+  reviewed_at: string | null;
+  reviewed_by_user_id: string | null;
+  review_notes: string | null;
 }
 
 export interface BudgetStatus {
@@ -142,6 +152,10 @@ export interface AggregatedArtifactItem {
   evidence_timestamps: string[];
   user_edited: boolean;
   created_at: string;
+  review_status: ReviewStatus;
+  reviewed_at: string | null;
+  reviewed_by_user_id: string | null;
+  review_notes: string | null;
 }
 
 export interface ArtifactListResponse {
@@ -157,6 +171,7 @@ export interface ArtifactStats {
   total_coverage_gaps: number;
   bugs_by_severity: Record<Severity, number>;
   bugs_by_priority: Record<Priority, number>;
+  bugs_by_review_status: Record<ReviewStatus, number>;
   open_high_severity_count: number;
 }
 
@@ -165,6 +180,7 @@ export interface ListArtifactsParams {
   session_id?: string;
   severity?: Severity[];
   priority?: Priority[];
+  review_status?: ReviewStatus;
   search?: string;
   sort?: ArtifactSort;
   page?: number;

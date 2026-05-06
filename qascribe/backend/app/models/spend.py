@@ -66,6 +66,18 @@ class Artifact(Base):
     # test_case | bug_report | coverage_gap
     content: Mapped[dict] = mapped_column(JSON, nullable=False)
     user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Bug review workflow (Phase 4). Currently only meaningful for bug_report rows.
+    # unreviewed | confirmed | dismissed | needs_more_info
+    review_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="unreviewed"
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

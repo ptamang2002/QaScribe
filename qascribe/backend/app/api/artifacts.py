@@ -4,6 +4,7 @@ Pure DB aggregation — no AI calls, no schema changes. All endpoints scope
 to the current user via JOIN on sessions.user_id.
 """
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import (
     AggregatedArtifactItem,
     ArtifactListResponse,
+    ArtifactReviewResponse,
+    ArtifactReviewUpdate,
     ArtifactStatsResponse,
     CoverageRollupItem,
     CoverageRollupResponse,
@@ -30,6 +33,7 @@ _VALID_TYPES = {"test_case", "bug_report", "coverage_gap"}
 _VALID_SORTS = {"created_desc", "created_asc", "severity_desc", "priority_desc"}
 _VALID_SEVERITIES = {"critical", "high", "medium", "low"}
 _VALID_PRIORITIES = {"P1", "P2", "P3", "P4"}
+_VALID_REVIEW_STATUSES = {"unreviewed", "confirmed", "dismissed", "needs_more_info"}
 
 # Severity ordering: also used for coverage_gap "priority" field which
 # happens to use the same severity-style values (critical/high/medium/low).
@@ -87,6 +91,7 @@ async def list_artifacts(
     session_id: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
+    review_status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     sort: str = Query("created_desc"),
     page: int = Query(1, ge=1),
@@ -118,6 +123,15 @@ async def list_artifacts(
             if p not in _VALID_PRIORITIES:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid priority: {p}")
 
+    rev_list: list[str] = []
+    if review_status:
+        rev_list = [r.strip() for r in review_status.split(",") if r.strip()]
+        for r in rev_list:
+            if r not in _VALID_REVIEW_STATUSES:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"invalid review_status: {r}"
+                )
+
     sev_expr = Artifact.content["severity"].as_string()
     pri_expr = Artifact.content["priority"].as_string()
 
@@ -140,6 +154,8 @@ async def list_artifacts(
         base = base.where(sev_expr.in_(sev_list))
     if pri_list:
         base = base.where(pri_expr.in_(pri_list))
+    if rev_list:
+        base = base.where(Artifact.review_status.in_(rev_list))
     if search:
         like = f"%{search.lower()}%"
         base = base.where(
@@ -192,6 +208,10 @@ async def list_artifacts(
             evidence_timestamps=_extract_evidence_timestamps(a.content),
             user_edited=a.user_edited,
             created_at=a.created_at,
+            review_status=a.review_status,
+            reviewed_at=a.reviewed_at,
+            reviewed_by_user_id=a.reviewed_by_user_id,
+            review_notes=a.review_notes,
         )
         for a, stitle, screated, sdur in rows
     ]
@@ -243,6 +263,21 @@ async def artifact_stats(
     pri_raw = {p: int(c) for p, c in (await db.execute(pri_stmt)).all() if p is not None}
     bugs_by_priority = {k: pri_raw.get(k, 0) for k in ("P1", "P2", "P3", "P4")}
 
+    rev_stmt = (
+        select(Artifact.review_status, func.count(Artifact.id))
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user.id,
+            Artifact.artifact_type == "bug_report",
+        )
+        .group_by(Artifact.review_status)
+    )
+    rev_raw = {r: int(c) for r, c in (await db.execute(rev_stmt)).all() if r is not None}
+    bugs_by_review_status = {
+        k: rev_raw.get(k, 0)
+        for k in ("unreviewed", "confirmed", "dismissed", "needs_more_info")
+    }
+
     open_high = bugs_by_severity["critical"] + bugs_by_severity["high"]
 
     return ArtifactStatsResponse(
@@ -251,7 +286,55 @@ async def artifact_stats(
         total_coverage_gaps=type_counts.get("coverage_gap", 0),
         bugs_by_severity=bugs_by_severity,
         bugs_by_priority=bugs_by_priority,
+        bugs_by_review_status=bugs_by_review_status,
         open_high_severity_count=open_high,
+    )
+
+
+# ---- PATCH /api/artifacts/{id}/review ----
+
+@router.patch("/{artifact_id}/review", response_model=ArtifactReviewResponse)
+async def review_artifact(
+    artifact_id: str,
+    payload: ArtifactReviewUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the review state on a bug_report artifact.
+
+    Idempotent — re-reviewing (including reverting to "unreviewed") is allowed
+    and refreshes reviewed_at + reviewed_by_user_id.
+    """
+    artifact = await db.get(Artifact, artifact_id)
+    if not artifact:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
+    session = await db.get(SessionModel, artifact.session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
+    if artifact.artifact_type != "bug_report":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Review states are only supported for bug_report artifacts",
+        )
+
+    artifact.review_status = payload.review_status
+    artifact.reviewed_at = datetime.now(timezone.utc)
+    artifact.reviewed_by_user_id = user.id
+    if payload.review_notes is not None:
+        artifact.review_notes = payload.review_notes
+    await db.commit()
+    await db.refresh(artifact)
+
+    return ArtifactReviewResponse(
+        id=artifact.id,
+        artifact_type=artifact.artifact_type,
+        content=artifact.content,
+        user_edited=artifact.user_edited,
+        created_at=artifact.created_at,
+        review_status=artifact.review_status,
+        reviewed_at=artifact.reviewed_at,
+        reviewed_by_user_id=artifact.reviewed_by_user_id,
+        review_notes=artifact.review_notes,
     )
 
 
