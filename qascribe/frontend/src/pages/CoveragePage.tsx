@@ -3,6 +3,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getCoverageRollup, listSessions } from '../api/client';
 import { EmptyState } from '../components/EmptyState';
+import { ExportButton } from '../components/ExportButton';
+import { ExportModal } from '../components/ExportModal';
 import { Pagination } from '../components/Pagination';
 import {
   parseList, useListPageUrlState,
@@ -53,6 +55,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 export function CoveragePage() {
+  const [exportOpen, setExportOpen] = useState(false);
   const {
     searchParams, q, inputValue, setInputValue, patchParams, clearAll,
   } = useListPageUrlState();
@@ -139,22 +142,34 @@ export function CoveragePage() {
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
-      <header className="mb-5">
-        <h1 className="text-base font-medium text-fg-0">Coverage gaps</h1>
-        <p className="mt-1 text-[11.5px] text-fg-2">
-          {totalUnique > 0 ? (
-            <>
-              <span className="tabular-nums">{totalUnique}</span> unique gap
-              {totalUnique === 1 ? '' : 's'}
-              {' across '}
-              <span className="tabular-nums">{totalSessions}</span>{' '}
-              session{totalSessions === 1 ? '' : 's'}
-            </>
-          ) : (
-            'Recurring untested flows surfaced from your sessions'
-          )}
-        </p>
+      <header className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-base font-medium text-fg-0">Coverage gaps</h1>
+          <p className="mt-1 text-[11.5px] text-fg-2">
+            {totalUnique > 0 ? (
+              <>
+                <span className="tabular-nums">{totalUnique}</span> unique gap
+                {totalUnique === 1 ? '' : 's'}
+                {' across '}
+                <span className="tabular-nums">{totalSessions}</span>{' '}
+                session{totalSessions === 1 ? '' : 's'}
+              </>
+            ) : (
+              'Recurring untested flows surfaced from your sessions'
+            )}
+          </p>
+        </div>
+        <ExportButton onClick={() => setExportOpen(true)} />
       </header>
+
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        artifactType="coverage_gaps"
+        initialFilters={{
+          priority: pri.length ? pri : undefined,
+        }}
+      />
 
       <FilterBar
         inputValue={inputValue}

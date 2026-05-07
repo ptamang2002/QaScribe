@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import {
-  getArtifactStats, getCoverageRollup, getSessionStatus, listSessions,
+  exportArtifacts, getArtifactStats, getCoverageRollup, getSessionStatus,
+  listSessions, triggerBlobDownload,
+  type ExportArtifactType, type ExportFormat,
 } from '../api/client';
 import { StatusPill } from '../components/StatusPill';
 import { useToast } from '../components/Toast';
@@ -599,14 +602,33 @@ function QuickExports({
   isLoading: boolean;
 }) {
   const toast = useToast();
+  const [busyFormat, setBusyFormat] = useState<ExportFormat | null>(null);
   const last7 = stats?.artifacts_created_last_7_days;
   const bugs7 = last7?.bug_report ?? 0;
   const tcs7 = last7?.test_case ?? 0;
 
-  function placeholderClick() {
-    toast.push('Export coming in next update', 'info', {
-      replaceKey: 'export-placeholder',
-    });
+  async function downloadWeekly(format: ExportFormat) {
+    if (busyFormat) return;
+    setBusyFormat(format);
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const date_from = weekAgo.toISOString().slice(0, 10);
+    const date_to = today.toISOString().slice(0, 10);
+    const types: ExportArtifactType[] = ['bugs', 'test_cases', 'coverage_gaps'];
+    try {
+      for (const t of types) {
+        const { blob, filename } = await exportArtifacts(t, format, {
+          date_from, date_to,
+        });
+        triggerBlobDownload(blob, filename);
+      }
+      toast.push(`Exported 3 ${format.toUpperCase()} files`, 'success');
+    } catch {
+      toast.push('Export failed', 'error');
+    } finally {
+      setBusyFormat(null);
+    }
   }
 
   return (
@@ -627,12 +649,20 @@ function QuickExports({
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <ExportButton label="JSON" onClick={placeholderClick} />
-          <ExportButton label="CSV" onClick={placeholderClick} />
+          <ExportButton
+            label={busyFormat === 'json' ? 'Preparing…' : 'JSON'}
+            onClick={() => downloadWeekly('json')}
+            disabled={busyFormat !== null}
+          />
+          <ExportButton
+            label={busyFormat === 'csv' ? 'Preparing…' : 'CSV'}
+            onClick={() => downloadWeekly('csv')}
+            disabled={busyFormat !== null}
+          />
           <ExportButton
             label="Word"
             disabled
-            title="Coming soon"
+            title="Word export coming soon"
             onClick={() => undefined}
           />
         </div>

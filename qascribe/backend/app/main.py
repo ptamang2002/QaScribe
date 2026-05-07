@@ -72,6 +72,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 app.include_router(sessions.router)
 app.include_router(artifacts.router)
+app.include_router(artifacts.export_router)
 app.include_router(config_api.config_router)
 app.include_router(config_api.users_router)
 

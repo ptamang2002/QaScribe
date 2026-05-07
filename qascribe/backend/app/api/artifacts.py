@@ -3,11 +3,15 @@
 Pure DB aggregation — no AI calls, no schema changes. All endpoints scope
 to the current user via JOIN on sessions.user_id.
 """
+import csv
+import io
+import json
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Iterable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import asc, case, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +29,7 @@ from app.core.db import get_db
 from app.models.spend import Artifact, Session as SessionModel, User
 
 router = APIRouter(prefix="/api/artifacts", tags=["artifacts"])
+export_router = APIRouter(prefix="/api/export", tags=["export"])
 
 
 # ---- Validation sets ----
@@ -443,3 +448,418 @@ async def coverage_rollup(
     items.sort(key=lambda i: (-i.occurrences, i.title))
 
     return CoverageRollupResponse(items=items, total=len(items))
+
+
+# ---- Export ----
+
+# URL path slug -> stored artifact_type value.
+_EXPORT_TYPE_MAP = {
+    "bugs": "bug_report",
+    "test_cases": "test_case",
+    "coverage_gaps": "coverage_gap",
+}
+_VALID_FORMATS = {"json", "csv"}
+_VALID_VALIDATION_TYPES = {"application", "browser-native", "server-side"}
+
+
+def _flatten_steps(steps) -> str:
+    """Test-case steps array → '1. ... | 2. ...' single-cell string."""
+    if not isinstance(steps, list):
+        return ""
+    parts: list[str] = []
+    for i, step in enumerate(steps, start=1):
+        if isinstance(step, str):
+            text = step.strip()
+        elif isinstance(step, dict):
+            text = (
+                step.get("step") or step.get("action") or step.get("description")
+                or step.get("text") or ""
+            )
+            if not isinstance(text, str):
+                text = str(text)
+            text = text.strip()
+        else:
+            text = str(step).strip()
+        if text:
+            parts.append(f"{i}. {text}")
+    return " | ".join(parts)
+
+
+def _flatten_list_field(value) -> str:
+    """Array of strings → 'a|b|c'. Scalar string passes through."""
+    if isinstance(value, list):
+        return "|".join(str(v) for v in value if v is not None and str(v).strip())
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _extract_validation_type(tags) -> str:
+    if not isinstance(tags, list):
+        return ""
+    for tag in tags:
+        if isinstance(tag, str) and tag.startswith("validation:"):
+            v = tag.split(":", 1)[1]
+            if v in _VALID_VALIDATION_TYPES:
+                return v
+    return ""
+
+
+def _non_validation_tags(tags) -> list[str]:
+    if not isinstance(tags, list):
+        return []
+    return [t for t in tags if isinstance(t, str) and not t.startswith("validation:")]
+
+
+def _parse_iso_date(s: str, field: str) -> datetime:
+    try:
+        d = date.fromisoformat(s)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid {field}: {s!r} (expected YYYY-MM-DD)",
+        )
+    return datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _parse_csv_param(
+    raw: Optional[str], allowed: set[str], field: str,
+) -> list[str]:
+    if not raw:
+        return []
+    out = [s.strip() for s in raw.split(",") if s.strip()]
+    for s in out:
+        if s not in allowed:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"invalid {field}: {s}"
+            )
+    return out
+
+
+def _build_filename(export_type: str, ext: str) -> str:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"qascribe-{export_type}-{today}.{ext}"
+
+
+def _row_for_bug(art: Artifact, session_title: str, session_created_at: datetime) -> dict:
+    c = art.content if isinstance(art.content, dict) else {}
+    return {
+        "id": art.id,
+        "session_title": session_title,
+        "session_created_at": session_created_at.isoformat(),
+        "title": c.get("title", "") or "",
+        "severity": c.get("severity", "") or "",
+        "priority": c.get("priority", "") or "",
+        "review_status": art.review_status,
+        "reviewed_at": art.reviewed_at.isoformat() if art.reviewed_at else "",
+        "description": (c.get("description") or c.get("summary") or "") or "",
+        "tester_notes": c.get("tester_notes", "") or "",
+        "evidence_timestamps": _flatten_list_field(c.get("evidence_timestamps", [])),
+        "tags": _flatten_list_field(_non_validation_tags(c.get("tags", []))),
+        "user_edited": "true" if art.user_edited else "false",
+        "created_at": art.created_at.isoformat(),
+    }
+
+
+def _row_for_test_case(art: Artifact, session_title: str, session_created_at: datetime) -> dict:
+    c = art.content if isinstance(art.content, dict) else {}
+    tags = c.get("tags", [])
+    return {
+        "id": art.id,
+        "session_title": session_title,
+        "session_created_at": session_created_at.isoformat(),
+        "tc_id": f"TC-{art.id[:4].upper()}",
+        "title": c.get("title", "") or "",
+        "preconditions": _flatten_list_field(c.get("preconditions", "")),
+        "steps": _flatten_steps(c.get("steps", [])),
+        "expected_result": c.get("expected_result", "") or "",
+        "validation_type": _extract_validation_type(tags),
+        "tags": _flatten_list_field(_non_validation_tags(tags)),
+        "user_edited": "true" if art.user_edited else "false",
+        "created_at": art.created_at.isoformat(),
+    }
+
+
+def _row_for_coverage_gap(
+    art: Artifact, session_title: str, session_created_at: datetime,
+) -> dict:
+    c = art.content if isinstance(art.content, dict) else {}
+    return {
+        "id": art.id,
+        "session_title": session_title,
+        "session_created_at": session_created_at.isoformat(),
+        "title": c.get("title") or c.get("untested_flow", "") or "",
+        "description": (c.get("description") or c.get("summary") or "") or "",
+        "priority": c.get("priority", "") or "",
+        "related_tested_flow": c.get("related_tested_flow", "") or "",
+        "user_edited": "true" if art.user_edited else "false",
+        "created_at": art.created_at.isoformat(),
+    }
+
+
+_CSV_COLUMNS = {
+    "bugs": [
+        "id", "session_title", "session_created_at", "title", "severity",
+        "priority", "review_status", "reviewed_at", "description",
+        "tester_notes", "evidence_timestamps", "tags", "user_edited",
+        "created_at",
+    ],
+    "test_cases": [
+        "id", "session_title", "session_created_at", "tc_id", "title",
+        "preconditions", "steps", "expected_result", "validation_type",
+        "tags", "user_edited", "created_at",
+    ],
+    "coverage_gaps": [
+        "id", "session_title", "session_created_at", "title", "description",
+        "priority", "related_tested_flow", "user_edited", "created_at",
+    ],
+}
+
+
+def _stream_csv(rows: Iterable[dict], fieldnames: list[str]) -> Iterable[str]:
+    """Yield CSV chunks (header first, then one row at a time) using
+    csv.QUOTE_MINIMAL so commas/quotes/newlines inside cells are escaped
+    correctly per RFC 4180."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL)
+    writer.writeheader()
+    yield buf.getvalue()
+    buf.seek(0); buf.truncate(0)
+    for row in rows:
+        writer.writerow(row)
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+
+
+def _json_item(art: Artifact, session_title: str) -> dict:
+    return {
+        "id": art.id,
+        "session_id": art.session_id,
+        "session_title": session_title,
+        "artifact_type": art.artifact_type,
+        "content": art.content,
+        "evidence_timestamps": _extract_evidence_timestamps(art.content),
+        "review_status": art.review_status,
+        "reviewed_at": art.reviewed_at.isoformat() if art.reviewed_at else None,
+        "reviewed_by_user_id": art.reviewed_by_user_id,
+        "review_notes": art.review_notes,
+        "user_edited": art.user_edited,
+        "created_at": art.created_at.isoformat(),
+    }
+
+
+def _stream_json(metadata: dict, items: list[dict]) -> Iterable[str]:
+    """Stream a pretty-printed JSON document with the {metadata, items} shape.
+
+    Yields the metadata header up-front, then each item on its own line, so
+    we never hold a fully-serialized blob in memory beyond a single item.
+    """
+    yield "{\n"
+    meta_str = json.dumps(metadata, indent=2, default=str)
+    yield '  "metadata": ' + meta_str.replace("\n", "\n  ")
+    yield ',\n  "items": ['
+    if not items:
+        yield "]\n}\n"
+        return
+    yield "\n"
+    for i, item in enumerate(items):
+        chunk = json.dumps(item, indent=2, default=str).replace("\n", "\n    ")
+        yield "    " + chunk
+        yield ",\n" if i < len(items) - 1 else "\n"
+    yield "  ]\n}\n"
+
+
+def _parse_export_filters(
+    export_type: str,
+    session_id: Optional[str],
+    date_from: Optional[str],
+    date_to: Optional[str],
+    review_status: Optional[str],
+    severity: Optional[str],
+    priority: Optional[str],
+    validation_type: Optional[str],
+) -> dict:
+    """Validate and normalize export query params. Raises 400 on bad input
+    or filter/type mismatch."""
+    if export_type not in _EXPORT_TYPE_MAP:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid export type: {export_type}",
+        )
+    if export_type != "bugs" and (review_status or severity):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "review_status and severity filters are only valid for bugs",
+        )
+    if export_type == "test_cases" and priority:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "priority filter is not supported for test_cases",
+        )
+    if export_type != "test_cases" and validation_type:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "validation_type filter is only valid for test_cases",
+        )
+    # Bugs use P1–P4 priority; coverage_gap.priority is severity-style.
+    pri_allowed = (
+        _VALID_PRIORITIES if export_type == "bugs" else _VALID_SEVERITIES
+    )
+    return {
+        "artifact_type": _EXPORT_TYPE_MAP[export_type],
+        "session_id": session_id,
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_from_dt": _parse_iso_date(date_from, "date_from") if date_from else None,
+        "date_to_dt": (
+            _parse_iso_date(date_to, "date_to") + timedelta(days=1)
+            if date_to else None
+        ),
+        "sev_list": _parse_csv_param(severity, _VALID_SEVERITIES, "severity"),
+        "pri_list": _parse_csv_param(priority, pri_allowed, "priority"),
+        "rev_list": _parse_csv_param(review_status, _VALID_REVIEW_STATUSES, "review_status"),
+        "val_list": _parse_csv_param(validation_type, _VALID_VALIDATION_TYPES, "validation_type"),
+    }
+
+
+def _build_export_stmt(user_id: str, f: dict):
+    sev_expr = Artifact.content["severity"].as_string()
+    pri_expr = Artifact.content["priority"].as_string()
+    stmt = (
+        select(
+            Artifact,
+            SessionModel.title.label("session_title"),
+            SessionModel.created_at.label("session_created_at"),
+        )
+        .join(SessionModel, Artifact.session_id == SessionModel.id)
+        .where(
+            SessionModel.user_id == user_id,
+            Artifact.artifact_type == f["artifact_type"],
+        )
+    )
+    if f["session_id"] is not None:
+        stmt = stmt.where(Artifact.session_id == f["session_id"])
+    if f["date_from_dt"] is not None:
+        stmt = stmt.where(Artifact.created_at >= f["date_from_dt"])
+    if f["date_to_dt"] is not None:
+        stmt = stmt.where(Artifact.created_at < f["date_to_dt"])
+    if f["sev_list"]:
+        stmt = stmt.where(sev_expr.in_(f["sev_list"]))
+    if f["pri_list"]:
+        stmt = stmt.where(pri_expr.in_(f["pri_list"]))
+    if f["rev_list"]:
+        stmt = stmt.where(Artifact.review_status.in_(f["rev_list"]))
+    return stmt.order_by(desc(Artifact.created_at))
+
+
+def _apply_validation_filter(rows, val_list: list[str]):
+    """validation_type lives inside content.tags as 'validation:<value>' —
+    JSON array containment varies by backend, so we filter in Python."""
+    if not val_list:
+        return rows
+    return [
+        r for r in rows
+        if _extract_validation_type(
+            (r[0].content or {}).get("tags") if isinstance(r[0].content, dict) else None
+        ) in val_list
+    ]
+
+
+@export_router.get("/{export_type}/count")
+async def export_count(
+    export_type: str,
+    session_id: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    review_status: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    validation_type: Optional[str] = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return how many artifacts an export with the same filters would
+    contain. Powers the 'This will export N items' preview."""
+    f = _parse_export_filters(
+        export_type, session_id, date_from, date_to,
+        review_status, severity, priority, validation_type,
+    )
+    rows = (await db.execute(_build_export_stmt(user.id, f))).all()
+    rows = _apply_validation_filter(rows, f["val_list"])
+    return {"count": len(rows)}
+
+
+@export_router.get("/{export_type}/{fmt}")
+async def export_artifacts(
+    export_type: str,
+    fmt: str,
+    session_id: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    review_status: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    validation_type: Optional[str] = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export filtered artifacts of a single type as JSON or CSV.
+
+    Bug-only filters (review_status/severity/priority) and test-case-only
+    filter (validation_type) return 400 if combined with the wrong type.
+    """
+    if fmt not in _VALID_FORMATS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"invalid format: {fmt}",
+        )
+
+    f = _parse_export_filters(
+        export_type, session_id, date_from, date_to,
+        review_status, severity, priority, validation_type,
+    )
+
+    rows = (await db.execute(_build_export_stmt(user.id, f))).all()
+    rows = _apply_validation_filter(rows, f["val_list"])
+
+    filename = _build_filename(export_type, fmt)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+
+    filters_applied: dict = {}
+    if session_id: filters_applied["session_id"] = session_id
+    if date_from: filters_applied["date_from"] = date_from
+    if date_to: filters_applied["date_to"] = date_to
+    if f["rev_list"]: filters_applied["review_status"] = f["rev_list"]
+    if f["sev_list"]: filters_applied["severity"] = f["sev_list"]
+    if f["pri_list"]: filters_applied["priority"] = f["pri_list"]
+    if f["val_list"]: filters_applied["validation_type"] = f["val_list"]
+
+    if fmt == "json":
+        items = [_json_item(art, stitle) for art, stitle, _ in rows]
+        metadata = {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "artifact_type": export_type,
+            "filters_applied": filters_applied,
+            "count": len(items),
+        }
+        return StreamingResponse(
+            _stream_json(metadata, items),
+            media_type="application/json",
+            headers=headers,
+        )
+
+    # CSV
+    fieldnames = _CSV_COLUMNS[export_type]
+    if export_type == "bugs":
+        row_fn = _row_for_bug
+    elif export_type == "test_cases":
+        row_fn = _row_for_test_case
+    else:
+        row_fn = _row_for_coverage_gap
+    rows_iter = (row_fn(art, stitle, screated) for art, stitle, screated in rows)
+    return StreamingResponse(
+        _stream_csv(rows_iter, fieldnames),
+        media_type="text/csv",
+        headers=headers,
+    )

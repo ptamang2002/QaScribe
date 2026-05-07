@@ -153,3 +153,72 @@ export async function reviewArtifact(
   const { data } = await api.patch(`/api/artifacts/${artifactId}/review`, body);
   return data;
 }
+
+// ---- Export ----
+
+export type ExportArtifactType = 'bugs' | 'test_cases' | 'coverage_gaps';
+export type ExportFormat = 'json' | 'csv';
+export type ValidationType = 'application' | 'browser-native' | 'server-side';
+
+export interface ExportFilters {
+  session_id?: string;
+  date_from?: string;
+  date_to?: string;
+  review_status?: ReviewStatus[];
+  severity?: import('../types').Severity[];
+  // Bugs use P1–P4; coverage_gap.priority is severity-style. Backend validates
+  // per type — keep this loose so callers don't need to cast.
+  priority?: (import('../types').Priority | import('../types').Severity)[];
+  validation_type?: ValidationType[];
+}
+
+function exportSearchParams(filters: ExportFilters): Record<string, string> {
+  const search: Record<string, string> = {};
+  if (filters.session_id) search.session_id = filters.session_id;
+  if (filters.date_from) search.date_from = filters.date_from;
+  if (filters.date_to) search.date_to = filters.date_to;
+  if (filters.review_status?.length)
+    search.review_status = filters.review_status.join(',');
+  if (filters.severity?.length) search.severity = filters.severity.join(',');
+  if (filters.priority?.length) search.priority = filters.priority.join(',');
+  if (filters.validation_type?.length)
+    search.validation_type = filters.validation_type.join(',');
+  return search;
+}
+
+export async function exportArtifacts(
+  artifactType: ExportArtifactType,
+  format: ExportFormat,
+  filters: ExportFilters,
+): Promise<{ blob: Blob; filename: string }> {
+  const { data, headers } = await api.get(
+    `/api/export/${artifactType}/${format}`,
+    { params: exportSearchParams(filters), responseType: 'blob' },
+  );
+  const cd = (headers['content-disposition'] as string | undefined) ?? '';
+  const match = cd.match(/filename="([^"]+)"/);
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = match?.[1] ?? `qascribe-${artifactType}-${today}.${format}`;
+  return { blob: data as Blob, filename };
+}
+
+export async function getExportCount(
+  artifactType: ExportArtifactType,
+  filters: ExportFilters,
+): Promise<number> {
+  const { data } = await api.get(`/api/export/${artifactType}/count`, {
+    params: exportSearchParams(filters),
+  });
+  return data.count as number;
+}
+
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}

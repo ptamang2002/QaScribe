@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getArtifactStats, listArtifacts } from '../api/client';
@@ -5,6 +6,8 @@ import {
   BugCard, PRIORITIES, PRIORITY_TINT, SEVERITIES, SEVERITY_TINT, type Tint,
 } from '../components/BugCard';
 import { EmptyState } from '../components/EmptyState';
+import { ExportButton } from '../components/ExportButton';
+import { ExportModal } from '../components/ExportModal';
 import { Pagination } from '../components/Pagination';
 import { useToast } from '../components/Toast';
 import { useBugReviewMutation } from '../hooks/useBugReviewMutation';
@@ -51,6 +54,7 @@ const REVIEW_FILTER_ACCENT: Record<ReviewFilter, string | null> = {
 export function BugReportsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const [exportOpen, setExportOpen] = useState(false);
 
   const {
     searchParams, q, inputValue, setInputValue, patchParams, clearAll,
@@ -141,29 +145,45 @@ export function BugReportsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
-      <header className="mb-5">
-        <h1 className="text-base font-medium text-fg-0">Bug reports</h1>
-        <p className="mt-1 text-[11.5px] text-fg-2">
-          {total > 0 ? (
-            <>
-              <span className="tabular-nums">{total}</span> bug
-              {total === 1 ? '' : 's'}
-              {distinctSessions > 0 && (
-                <>
-                  {' across '}
-                  <span className="tabular-nums">
-                    {distinctSessions}
-                    {!allFitOnPage && '+'}
-                  </span>{' '}
-                  session{distinctSessions === 1 && allFitOnPage ? '' : 's'}
-                </>
-              )}
-            </>
-          ) : (
-            'All bugs surfaced from your testing sessions'
-          )}
-        </p>
+      <header className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-base font-medium text-fg-0">Bug reports</h1>
+          <p className="mt-1 text-[11.5px] text-fg-2">
+            {total > 0 ? (
+              <>
+                <span className="tabular-nums">{total}</span> bug
+                {total === 1 ? '' : 's'}
+                {distinctSessions > 0 && (
+                  <>
+                    {' across '}
+                    <span className="tabular-nums">
+                      {distinctSessions}
+                      {!allFitOnPage && '+'}
+                    </span>{' '}
+                    session{distinctSessions === 1 && allFitOnPage ? '' : 's'}
+                  </>
+                )}
+              </>
+            ) : (
+              'All bugs surfaced from your testing sessions'
+            )}
+          </p>
+        </div>
+        <ExportButton onClick={() => setExportOpen(true)} />
       </header>
+
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        artifactType="bugs"
+        initialFilters={{
+          session_id: sessionIdFilter,
+          review_status:
+            reviewFilter === 'all' ? undefined : [reviewFilter as ReviewStatus],
+          severity: sev.length ? sev : undefined,
+          priority: pri.length ? pri : undefined,
+        }}
+      />
 
       {sessionIdFilter && (
         <div className="mb-3 flex items-center gap-2 rounded-md border-0.5 border-border-0 bg-bg-1 px-3 py-2 text-[11.5px] text-fg-1">

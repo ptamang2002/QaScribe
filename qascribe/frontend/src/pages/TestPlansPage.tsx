@@ -3,6 +3,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { getArtifactStats, listArtifacts } from '../api/client';
 import { EmptyState } from '../components/EmptyState';
+import { ExportButton } from '../components/ExportButton';
+import { ExportModal } from '../components/ExportModal';
 import { Pagination } from '../components/Pagination';
 import {
   parseList, useListPageUrlState,
@@ -114,6 +116,7 @@ function topTags(items: AggregatedArtifactItem[], n: number): string[] {
 
 export function TestPlansPage() {
   const navigate = useNavigate();
+  const [exportOpen, setExportOpen] = useState(false);
   const {
     searchParams, q, inputValue, setInputValue, patchParams, clearAll,
   } = useListPageUrlState();
@@ -224,34 +227,46 @@ export function TestPlansPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
-      <header className="mb-5">
-        <h1 className="text-base font-medium text-fg-0">Test plans</h1>
-        <p className="mt-1 text-[11.5px] text-fg-2">
-          {total > 0 ? (
-            <>
-              <span className="tabular-nums">{total}</span> test case
-              {total === 1 ? '' : 's'}
-              {distinctSessions > 0 && (
-                <>
-                  {' across '}
-                  <span className="tabular-nums">
-                    {distinctSessions}
-                    {!allFitOnPage && '+'}
-                  </span>{' '}
-                  session{distinctSessions === 1 && allFitOnPage ? '' : 's'}
-                </>
-              )}
-              {localFiltersActive && (
-                <span className="ml-2 text-fg-2">
-                  · filtered on this page ({PAGE_SIZE} max)
-                </span>
-              )}
-            </>
-          ) : (
-            'All test cases generated from your testing sessions'
-          )}
-        </p>
+      <header className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-base font-medium text-fg-0">Test plans</h1>
+          <p className="mt-1 text-[11.5px] text-fg-2">
+            {total > 0 ? (
+              <>
+                <span className="tabular-nums">{total}</span> test case
+                {total === 1 ? '' : 's'}
+                {distinctSessions > 0 && (
+                  <>
+                    {' across '}
+                    <span className="tabular-nums">
+                      {distinctSessions}
+                      {!allFitOnPage && '+'}
+                    </span>{' '}
+                    session{distinctSessions === 1 && allFitOnPage ? '' : 's'}
+                  </>
+                )}
+                {localFiltersActive && (
+                  <span className="ml-2 text-fg-2">
+                    · filtered on this page ({PAGE_SIZE} max)
+                  </span>
+                )}
+              </>
+            ) : (
+              'All test cases generated from your testing sessions'
+            )}
+          </p>
+        </div>
+        <ExportButton onClick={() => setExportOpen(true)} />
       </header>
+
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        artifactType="test_cases"
+        initialFilters={{
+          validation_type: validation.length ? validation : undefined,
+        }}
+      />
 
       <FilterBar
         inputValue={inputValue}
