@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMe, getModelConfig, updateMyBudget } from '../api/client';
+import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getModelConfig } from '../api/client';
 import type { RecordingSettings } from '../types';
-import { useToast } from '../components/Toast';
 
 const RECORDING_SETTINGS_KEY = 'qascribe.recordingSettings';
 
@@ -25,30 +24,12 @@ function loadRecordingSettings(): RecordingSettings {
 }
 
 export function SettingsPage() {
-  const toast = useToast();
-  const queryClient = useQueryClient();
   const { data: models } = useQuery({ queryKey: ['models'], queryFn: getModelConfig });
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: getMe });
-  const [budget, setBudget] = useState<number>(50);
   const [recording, setRecording] = useState<RecordingSettings>(loadRecordingSettings);
-
-  useEffect(() => {
-    if (me) setBudget(me.monthly_budget_usd);
-  }, [me]);
 
   useEffect(() => {
     localStorage.setItem(RECORDING_SETTINGS_KEY, JSON.stringify(recording));
   }, [recording]);
-
-  const saveBudget = useMutation({
-    mutationFn: () => updateMyBudget(budget),
-    onSuccess: () => {
-      toast.push('Budget updated', 'success');
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      queryClient.invalidateQueries({ queryKey: ['budget'] });
-    },
-    onError: () => toast.push('Could not update budget', 'error'),
-  });
 
   return (
     <div className="mx-auto max-w-3xl px-8 py-8">
@@ -65,81 +46,6 @@ export function SettingsPage() {
             <ModelRow label="Artifact synthesis" value={models?.claude_model} />
           </tbody>
         </table>
-      </Section>
-
-      <Section
-        title="Pricing"
-        subtitle="Current cost per million tokens (or per minute for STT)."
-      >
-        <table className="w-full">
-          <tbody>
-            <PriceRow
-              label="Gemini input"
-              value={models ? `$${models.gemini_input_price_per_m.toFixed(2)}/M tokens` : '—'}
-            />
-            <PriceRow
-              label="Gemini output"
-              value={models ? `$${models.gemini_output_price_per_m.toFixed(2)}/M tokens` : '—'}
-            />
-            <PriceRow
-              label="Whisper STT"
-              value={models ? `$${models.stt_price_per_minute.toFixed(3)}/minute` : '—'}
-            />
-            <PriceRow
-              label="Claude input"
-              value={models ? `$${models.claude_input_price_per_m.toFixed(2)}/M tokens` : '—'}
-            />
-            <PriceRow
-              label="Claude output"
-              value={models ? `$${models.claude_output_price_per_m.toFixed(2)}/M tokens` : '—'}
-            />
-          </tbody>
-        </table>
-      </Section>
-
-      <Section
-        title="Budget controls"
-        subtitle="Per-job and platform-wide caps are set in backend/.env."
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-[11px] font-medium text-fg-1">
-              Your monthly budget (USD)
-            </label>
-            <div className="mt-1 flex gap-2">
-              <input
-                type="number"
-                min="1"
-                max="10000"
-                step="1"
-                value={budget}
-                onChange={(e) => setBudget(parseFloat(e.target.value) || 0)}
-                className="input max-w-xs"
-              />
-              <button
-                onClick={() => saveBudget.mutate()}
-                disabled={saveBudget.isPending || budget === me?.monthly_budget_usd}
-                className="btn-primary"
-              >
-                {saveBudget.isPending ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <MiniStat
-              label="Per-session cap"
-              value={`$${models?.per_job_max_usd.toFixed(2) ?? '—'}`}
-              accent="#4ade80"
-            />
-            <MiniStat
-              label="Max video duration"
-              value={
-                models ? `${Math.round(models.max_video_duration_seconds / 60)} min` : '—'
-              }
-              accent="#22d3ee"
-            />
-          </div>
-        </div>
       </Section>
 
       <Section
@@ -241,20 +147,6 @@ function ModelRow({ label, value }: { label: string; value: string | undefined }
   );
 }
 
-function PriceRow({ label, value }: { label: string; value: string }) {
-  return (
-    <tr className="border-t-0.5 border-border-0 first:border-t-0">
-      <td className="py-2.5 text-[12px] text-fg-1">{label}</td>
-      <td
-        className="py-2.5 text-right text-[12px] tabular-nums text-fg-0"
-        style={{ fontFamily: 'var(--font-mono)' }}
-      >
-        {value}
-      </td>
-    </tr>
-  );
-}
-
 function CurrentPill() {
   return (
     <span
@@ -263,20 +155,5 @@ function CurrentPill() {
     >
       CURRENT
     </span>
-  );
-}
-
-function MiniStat({
-  label, value, accent,
-}: { label: string; value: string; accent: string }) {
-  return (
-    <div className="stat-card" style={{ '--accent': accent } as CSSProperties}>
-      <div className="text-[10px] font-medium uppercase tracking-[0.5px] text-fg-2">
-        {label}
-      </div>
-      <div className="mt-1 text-[15px] font-medium tabular-nums text-fg-0">
-        {value}
-      </div>
-    </div>
   );
 }

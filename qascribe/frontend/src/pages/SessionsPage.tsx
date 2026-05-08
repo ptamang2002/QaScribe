@@ -2,9 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { listSessions } from '../api/client';
 import { StatusPill } from '../components/StatusPill';
-import type { SessionListItem } from '../types';
 
-const ROW_GRID = 'grid-cols-[1fr,110px,90px,90px,40px]';
+const ROW_GRID = 'grid-cols-[1fr,110px,90px,40px]';
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -23,12 +22,6 @@ function formatRelativeTime(iso: string): string {
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 7) return `${diffDay}d ago`;
   return date.toLocaleDateString();
-}
-
-function formatCost(s: SessionListItem): string {
-  if (s.actual_cost_usd != null) return `$${s.actual_cost_usd.toFixed(3)}`;
-  if (s.estimated_cost_usd != null) return `est $${s.estimated_cost_usd.toFixed(3)}`;
-  return '—';
 }
 
 export function SessionsPage() {
@@ -65,7 +58,6 @@ export function SessionsPage() {
           <span>Session</span>
           <span>Status</span>
           <span className="text-right">Artifacts</span>
-          <span className="text-right">Cost</span>
           <span />
         </div>
 
@@ -117,9 +109,6 @@ export function SessionsPage() {
                 <span className="text-right text-[12px] tabular-nums text-fg-1">
                   {s.artifact_count}
                 </span>
-                <span className="text-right text-[12px] tabular-nums text-fg-1">
-                  {formatCost(s)}
-                </span>
                 <span className="text-right text-[12px] text-fg-2">→</span>
               </button>
             ))}
@@ -139,7 +128,6 @@ function SkeletonRow() {
       </div>
       <div className="h-4 w-16 animate-pulse rounded-full bg-bg-2" />
       <div className="ml-auto h-3 w-8 animate-pulse rounded bg-bg-2" />
-      <div className="ml-auto h-3 w-14 animate-pulse rounded bg-bg-2" />
       <div />
     </div>
   );

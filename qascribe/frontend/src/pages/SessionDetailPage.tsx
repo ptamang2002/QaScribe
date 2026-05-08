@@ -88,7 +88,6 @@ export function SessionDetailPage() {
   }
 
   const isProcessing = session.status === 'queued' || session.status === 'processing';
-  const cost = session.actual_cost_usd ?? session.estimated_cost_usd;
   const unreviewedBugCount = artifacts
     ? artifacts.filter(
         (a) => a.artifact_type === 'bug_report' && a.review_status === 'unreviewed',
@@ -111,15 +110,6 @@ export function SessionDetailPage() {
           </span>
           <span>·</span>
           <span className="capitalize">{session.test_focus}</span>
-          {cost != null && (
-            <>
-              <span>·</span>
-              <span className="tabular-nums">
-                ${cost.toFixed(3)}
-                {session.actual_cost_usd != null ? ' actual' : ' est'}
-              </span>
-            </>
-          )}
         </div>
         {(session.error_message ||
           session.status === 'failed' ||

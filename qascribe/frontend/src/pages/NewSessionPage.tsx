@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import {
-  createSession, estimateSession, getBudgetStatus, getModelConfig,
-} from '../api/client';
+import { createSession, estimateSession } from '../api/client';
 import type { CostEstimate, RecordingSettings } from '../types';
 import { useScreenRecorder } from '../hooks/useScreenRecorder';
 import { detectBrowserSupport } from '../hooks/useBrowserSupport';
@@ -28,9 +26,6 @@ export function NewSessionPage() {
   const [file, setFile] = useState<File | null>(null);
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
-
-  const { data: budget } = useQuery({ queryKey: ['budget'], queryFn: getBudgetStatus });
-  const { data: modelConfig } = useQuery({ queryKey: ['models'], queryFn: getModelConfig });
 
   const submit = useMutation({
     mutationFn: async (input: { file: File | Blob; filename: string }) =>
@@ -138,61 +133,6 @@ export function NewSessionPage() {
             </div>
           </div>
 
-          <div className="card px-4 py-3.5">
-            <h2 className="text-[10px] font-medium uppercase tracking-[0.5px] text-fg-2">
-              Cost preview
-            </h2>
-            <p className="mt-1 text-[11px] text-fg-2">
-              Final estimate appears after file selection
-            </p>
-            <table className="mt-3 w-full text-[11.5px]">
-              <tbody>
-                <tr>
-                  <td className="py-1 text-fg-1">Gemini (video)</td>
-                  <td className="py-1 text-right tabular-nums text-fg-0">
-                    {modelConfig
-                      ? `$${modelConfig.gemini_input_price_per_m.toFixed(2)}/M in`
-                      : '—'}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 text-fg-1">Whisper (voice)</td>
-                  <td className="py-1 text-right tabular-nums text-fg-0">
-                    {modelConfig
-                      ? `$${modelConfig.stt_price_per_minute.toFixed(3)}/min`
-                      : '—'}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 text-fg-1">Claude (synthesis)</td>
-                  <td className="py-1 text-right tabular-nums text-fg-0">
-                    {modelConfig
-                      ? `$${modelConfig.claude_input_price_per_m.toFixed(2)}/M in`
-                      : '—'}
-                  </td>
-                </tr>
-                {estimate && (
-                  <tr className="border-t-0.5 border-border-0">
-                    <td className="pt-2 font-medium text-fg-0">Estimated total</td>
-                    <td className="pt-2 text-right font-medium tabular-nums text-fg-0">
-                      ${estimate.estimated_cost_with_safety_margin_usd.toFixed(3)}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            <div className="mt-3 border-t-0.5 border-border-0 pt-2.5 text-[11px] text-fg-1">
-              Cap per session:{' '}
-              <span className="font-medium tabular-nums text-fg-0">
-                ${modelConfig?.per_job_max_usd.toFixed(2) ?? '—'}
-              </span>
-              <br />
-              Monthly remaining:{' '}
-              <span className="font-medium tabular-nums text-fg-0">
-                ${budget?.remaining_usd.toFixed(2) ?? '—'}
-              </span>
-            </div>
-          </div>
         </aside>
       </div>
     </div>
@@ -285,9 +225,9 @@ function UploadPanel({
       {estimate && (
         <div className="mt-4 rounded-lg border-0.5 border-border-0 bg-bg-1 px-3.5 py-3">
           <div className="text-[10px] font-medium uppercase tracking-[0.5px] text-fg-2">
-            Pre-flight estimate
+            Pre-flight check
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-4">
+          <div className="mt-2 grid grid-cols-2 gap-4">
             <div>
               <div className="text-[10px] uppercase tracking-[0.5px] text-fg-2">Duration</div>
               <div className="mt-0.5 text-[15px] font-medium tabular-nums text-fg-0">
@@ -300,12 +240,6 @@ function UploadPanel({
                 {estimate.has_voice_track ? 'Yes' : 'No'}
               </div>
             </div>
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.5px] text-fg-2">Estimated cost</div>
-              <div className="mt-0.5 text-[15px] font-medium tabular-nums text-fg-0">
-                ${estimate.estimated_cost_with_safety_margin_usd.toFixed(3)}
-              </div>
-            </div>
           </div>
           {estimate.would_exceed_per_job_cap && (
             <div
@@ -316,7 +250,7 @@ function UploadPanel({
                 color: '#f87171',
               }}
             >
-              This video would exceed your per-session budget cap.
+              This video exceeds the per-session processing limit.
             </div>
           )}
           <div className="mt-4 flex justify-end">

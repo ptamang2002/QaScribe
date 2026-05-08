@@ -542,7 +542,7 @@ function TestCasesPanel({ stats }: { stats: ArtifactStats }) {
   const edited = stats.test_cases_user_edited_this_month;
   return (
     <GlancePanelShell
-      to="/test-plans"
+      to="/test-case-reports"
       header="test cases"
       value={stats.total_test_cases}
       detail={

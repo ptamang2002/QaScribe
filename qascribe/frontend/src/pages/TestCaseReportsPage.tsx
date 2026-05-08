@@ -114,7 +114,7 @@ function topTags(items: AggregatedArtifactItem[], n: number): string[] {
     .map(([t]) => t);
 }
 
-export function TestPlansPage() {
+export function TestCaseReportsPage() {
   const navigate = useNavigate();
   const [exportOpen, setExportOpen] = useState(false);
   const {
@@ -229,7 +229,7 @@ export function TestPlansPage() {
     <div className="mx-auto max-w-6xl px-8 py-8">
       <header className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-base font-medium text-fg-0">Test plans</h1>
+          <h1 className="text-base font-medium text-fg-0">Test case reports</h1>
           <p className="mt-1 text-[11.5px] text-fg-2">
             {total > 0 ? (
               <>
